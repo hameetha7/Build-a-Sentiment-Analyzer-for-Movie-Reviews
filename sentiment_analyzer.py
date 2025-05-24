@@ -1,75 +1,75 @@
+import streamlit as st
 import pandas as pd
-import numpy as np
 import string
 import nltk
-from sklearn.model_selection import train_test_split
+nltk.download('stopwords')
+from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
+import joblib
+import os
 
-# Ensure stopwords are downloaded
-nltk.download('stopwords', quiet=True)
-stop_words = set(stopwords.words('english'))
+# Download NLTK stopwords if not already present
+nltk.download('stopwords')
 
-# 1. Load the dataset
-df = pd.read_csv("imdb_sample.csv")  # Replace with your actual CSV filename if needed
+# ========== TRAINING PART (reuse Day 4 logic, run once, then comment out for faster loading) ==========
+# If you already have 'model.joblib' and 'vectorizer.joblib', you can skip retraining for faster loading.
 
-# 2. Clean the text
+CSV_PATH = 'IMDB_Dataset.csv'  # Adjust if your dataset filename is different
+TEXT_COL = 'review'
+LABEL_COL = 'sentiment'
+
 def clean_text(text):
     text = text.translate(str.maketrans('', '', string.punctuation))
     text = text.lower()
-    words = [word for word in text.split() if word not in stop_words]
-    return " ".join(words)
+    stop_words = set(stopwords.words('english'))
+    words = text.split()
+    words = [w for w in words if w not in stop_words]
+    return ' '.join(words)
 
-df['clean_review'] = df['review'].astype(str).apply(clean_text)
+if not (os.path.exists("model.joblib") and os.path.exists("vectorizer.joblib")):
+    df = pd.read_csv(CSV_PATH)
+    df = df[[TEXT_COL, LABEL_COL]].dropna()
+    df[TEXT_COL] = df[TEXT_COL].apply(clean_text)
+    df[LABEL_COL] = df[LABEL_COL].map({'positive': 1, 'negative': 0})
+    X = df[TEXT_COL]
+    y = df[LABEL_COL]
+    vectorizer = TfidfVectorizer()
+    X_vec = vectorizer.fit_transform(X)
+    model = LogisticRegression(max_iter=1000)
+    model.fit(X_vec, y)
+    joblib.dump(model, "model.joblib")
+    joblib.dump(vectorizer, "vectorizer.joblib")
 
-# 3. Encode labels
-df['label'] = df['sentiment'].map({'positive': 1, 'negative': 0})
+# ========== LOAD TRAINED MODEL AND VECTORIZER ==========
+model = joblib.load("model.joblib")
+vectorizer = joblib.load("vectorizer.joblib")
 
-# 4. Train/test split
-X_train, X_test, y_train, y_test = train_test_split(
-    df['clean_review'], df['label'], test_size=0.2, random_state=42
-)
+# ========== STREAMLIT APP ==========
+st.set_page_config(page_title="Movie Review Sentiment Analyzer")
+st.title("🎬 Movie Review Sentiment Analyzer")
 
-# 5. TF-IDF Vectorizer
-vectorizer = TfidfVectorizer(max_features=1000)
-X_train_vec = vectorizer.fit_transform(X_train)
-X_test_vec = vectorizer.transform(X_test)
+review = st.text_area("Enter your movie review:", height=120)
+if st.button("Predict"):
+    cleaned = clean_text(review)
+    vec = vectorizer.transform([cleaned])
+    pred_proba = model.predict_proba(vec)[0]
+    pred = model.predict(vec)[0]
+    sentiment = "POSITIVE" if pred == 1 else "NEGATIVE"
+    confidence = pred_proba[pred]
+    # Emoji + Color
+    if pred == 1:
+        st.success(f"😊 Result: **{sentiment}** (Confidence: {confidence*100:.2f}%)")
+        st.markdown('<style>div.stAlert{background-color:#d4edda;}</style>', unsafe_allow_html=True)
+    else:
+        st.error(f"😞 Result: **{sentiment}** (Confidence: {confidence*100:.2f}%)")
+        st.markdown('<style>div.stAlert{background-color:#f8d7da;}</style>', unsafe_allow_html=True)
 
-# 6. Train Logistic Regression model
-model = LogisticRegression(max_iter=500)
-model.fit(X_train_vec, y_train)
-
-# 7. Test the model
-y_pred = model.predict(X_test_vec)
-accuracy = accuracy_score(y_test, y_pred)
-print(f"Model Accuracy: {accuracy*100:.2f}%\n")
-
-# 8. Show 5 sample predictions
-print("Sample Predictions:")
-num_samples = min(5, len(X_test))
-sample_indices = np.random.choice(len(X_test), num_samples, replace=False)
-for idx in sample_indices:
-    review = X_test.iloc[idx]
-    true_label = "POSITIVE" if y_test.iloc[idx] == 1 else "NEGATIVE"
-    pred_label = "POSITIVE" if y_pred[idx] == 1 else "NEGATIVE"
-    print(f'Review: "{df["review"].iloc[X_test.index[idx]]}"')
-    print(f"Prediction: {pred_label} (Actual: {true_label})\n")
-
-# 9. Input box for custom reviews
-def predict_custom_review():
-    while True:
-        custom_review = input('Enter a movie review (or type "exit" to quit): ')
-        if custom_review.lower() == 'exit':
-            break
-        clean_custom = clean_text(custom_review)
-        vec_custom = vectorizer.transform([clean_custom])
-        pred = model.predict(vec_custom)[0]
-        label = "POSITIVE" if pred == 1 else "NEGATIVE"
-        print(f'Prediction: {label}')
-
-if __name__ == "__main__":
-    print("Try custom reviews like:")
-    print('  The movie was boring and too long.')
-    print('  Amazing performance and storyline!\n')
-    predict_custom_review()
+# Optional: Add some quick test reviews
+with st.expander("Try example reviews"):
+    st.write('''
+- "This was the worst movie ever."
+- "I enjoyed every minute of it!"
+- "The plot was predictable and boring."
+- "Amazing performance and storyline!"
+''')
